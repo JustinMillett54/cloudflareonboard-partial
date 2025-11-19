@@ -1,0 +1,19 @@
+cloudflare_account_id = "0123456789abcdef0123456789abcdef"
+
+zones = {
+  main = { domain = "example.com" }
+  corp = { domain = "example.io" }
+}
+
+dns_records = {
+  main = [
+    { hostname = "",    type = "A",     target = "203.0.113.10" },              # apex – needs CNAME flattening at current DNS
+    { hostname = "www", type = "CNAME", target = "origin.example.com" },
+    { hostname = "app", type = "CNAME", target = "app-lb.example.com" },
+    { hostname = "api", type = "CNAME", target = "api.example.com" },
+  ]
+  corp = [
+    { hostname = "",    type = "A",     target = "198.51.100.20" },
+    { hostname = "www", type = "CNAME", target = "origin.example.io" },
+  ]
+}
