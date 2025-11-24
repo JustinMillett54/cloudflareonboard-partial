@@ -1,25 +1,27 @@
 # main.tf – Corrected for Cloudflare v5.12 (November 2025)
-# Changes: account_id for zone/monitor; origins as list arg for pool; tunnel_configuration with ingress list; no "account" object
+# Changes: account as object for zone; dns_record (not record); zero_trust_tunnel (not tunnel); tunnel_configuration references renamed; origins list for pool
 
 provider "cloudflare" {
   api_token = var.cloudflare_api_token
 }
 
 # ================================
-# ZONES – Partial setup (v5: account_id string, name string)
+# ZONES – Partial setup (v5: account as object, name string)
 # ================================
 resource "cloudflare_zone" "this" {
   for_each = var.zones
 
-  account_id = var.cloudflare_account_id  # v5 required – string ID
-  name       = each.value.domain  # v5 required – string domain name
-  type       = "partial"  # Pro/Business+ required; change to "full" for free test
+  account = {  # v5 required – object with id
+    id = var.cloudflare_account_id
+  }
+  name    = each.value.domain  # v5 required – string domain name
+  type    = "partial"  # Pro/Business+ required; change to "full" for free test
 }
 
 # ================================
-# DNS RECORDS – Proxied only (v5: unchanged)
+# DNS RECORDS – Proxied only (v5: renamed to dns_record)
 # ================================
-resource "cloudflare_record" "records" {
+resource "cloudflare_dns_record" "records" {
   for_each = {
     for pair in local.record_pairs : "${pair.zone_key}.${pair.record.hostname}.${pair.record.type}" => pair
   }
@@ -167,20 +169,20 @@ resource "cloudflare_zone_settings_override" "this" {
 }
 
 # ================================
-# CLOUDFLARED TUNNEL – Zero-trust reverse proxy (v5: tunnel unchanged, config is tunnel_configuration with ingress list)
+# CLOUDFLARED TUNNEL – Zero-trust reverse proxy (v5: zero_trust_tunnel, configuration with ingress list)
 # ================================
 resource "random_id" "tunnel_secret" {
   byte_length = 32
 }
 
-resource "cloudflare_tunnel" "app_tunnel" {
+resource "cloudflare_zero_trust_tunnel" "app_tunnel" {
   account_id = var.cloudflare_account_id  # v5 required
   name       = "app-to-cloudflare-tunnel"
   secret     = random_id.tunnel_secret.b64_std
 }
 
-resource "cloudflare_tunnel_configuration" "app_tunnel_config" {
-  tunnel_id = cloudflare_tunnel.app_tunnel.id  # v5 required
+resource "cloudflare_zero_trust_tunnel_configuration" "app_tunnel_config" {
+  tunnel_id = cloudflare_zero_trust_tunnel.app_tunnel.id  # v5 required
 
   ingress {
     hostname = var.tunnel_public_hostname
@@ -192,12 +194,12 @@ resource "cloudflare_tunnel_configuration" "app_tunnel_config" {
   }
 }
 
-# Tunnel CNAME – Proxied for WAF/Bot (v5: unchanged)
-resource "cloudflare_record" "tunnel_cname" {
+# Tunnel CNAME – Proxied for WAF/Bot (v5: dns_record renamed)
+resource "cloudflare_dns_record" "tunnel_cname" {
   zone_id = cloudflare_zone.this[var.primary_zone_key].id
   name    = split(".", var.tunnel_public_hostname)[0]
   type    = "CNAME"
-  value   = "${cloudflare_tunnel.app_tunnel.id}.cfargotunnel.com"
+  value   = "${cloudflare_zero_trust_tunnel.app_tunnel.id}.cfargotunnel.com"
   proxied = true
   comment = "Tunnel CNAME – Terraform-managed"
 }
@@ -218,7 +220,7 @@ resource "cloudflare_certificate_pack" "advanced_cert" {
 }
 
 # ================================
-# GLOBAL LOAD BALANCING – Between app servers via tunnel (v5: account_id for pool/monitor; origins as list arg)
+# GLOBAL LOAD BALANCING – Between app servers via tunnel (v5: account_id for pool; origins list)
 # ================================
 resource "cloudflare_load_balancer" "app_lb" {
   zone_id          = cloudflare_zone.this[var.primary_zone_key].id
@@ -251,7 +253,7 @@ resource "cloudflare_load_balancer" "app_lb" {
 resource "cloudflare_load_balancer_pool" "app_pool" {
   account_id = var.cloudflare_account_id  # v5 required
   name       = "app-pool"
-  origins = [  # v5: origins as list argument, not block
+  origins = [  # v5: list of objects
     {
       name    = "app-server-1"
       address = var.proxy_vm_app_server_ips[0]
@@ -265,7 +267,7 @@ resource "cloudflare_load_balancer_pool" "app_pool" {
       weight  = 1
     }
   ]
-  monitor = cloudflare_load_balancer_monitor.app_monitor.id  # v5 required
+  monitor = cloudflare_load_balancer_monitor.app_monitor.id
 }
 
 resource "cloudflare_load_balancer_monitor" "app_monitor" {
