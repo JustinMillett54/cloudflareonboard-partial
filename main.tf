@@ -1,5 +1,5 @@
 # main.tf – Verified v5.13 Syntax (November 2025)
-# Fixes: account object for zone; content for dns_record; sbfm_ only for bot; rules list arg for ruleset; filter object for data rulesets; zone_setting singular with for_each; zero_trust_tunnel_cloudflared; zero_trust_tunnel_cloudflared_config with ingress list; google for cert; fallback_pool/default_pools as id; origins block for pool; account_id for monitor; hardcoded OWASP ID
+# Fixes: filter block for data; for_each for zone_setting singular; tunnel_configuration with config/ingress_rule block; origins block for pool; rules block for lb
 
 provider "cloudflare" {
   api_token = var.cloudflare_api_token
@@ -78,18 +78,17 @@ resource "cloudflare_ruleset" "managed_waf_log" {
       enabled = true
       description = "OWASP Core Ruleset – LOG"
       execute = {
-        id = "4814384a9e5d4991b9815d64d2d2d2d2"  # v5 hardcoded OWASP ID (from docs)
+        id = "4814384a9e5d4991b9815d64d2d2d2d2"  # Hardcoded from docs
       }
     }
   ]
 }
 
-# Data rulesets – OWASP (v5: filter object)
 data "cloudflare_rulesets" "owasp" {
   for_each = cloudflare_zone.this
   zone_id = each.value.id
 
-  filter = {
+  filter {
     kind = "managed"
     name = "Cloudflare OWASP Core Ruleset"
     phase = "http_request_firewall_managed"
@@ -143,7 +142,7 @@ resource "cloudflare_ruleset" "rate_limiting" {
 }
 
 # ZONE HARDENING SETTINGS (v5: cloudflare_zone_setting singular, for_each for each setting)
-resource "cloudflare_zone_setting" "ssl_setting" {
+resource "cloudflare_zone_setting" "ssl" {
   for_each = cloudflare_zone.this
 
   zone_id = each.value.id
@@ -207,7 +206,7 @@ resource "cloudflare_zone_setting" "websocket" {
   value = "on"
 }
 
-# CLOUDFLARED TUNNEL – Zero-trust reverse proxy (v5: cloudflare_tunnel, tunnel_settings with ingress list)
+# CLOUDFLARED TUNNEL – Zero-trust reverse proxy (v5: cloudflare_tunnel, tunnel_configuration with config/ingress_rule block)
 resource "random_id" "tunnel_secret" {
   byte_length = 32
 }
@@ -218,18 +217,19 @@ resource "cloudflare_tunnel" "app_tunnel" {
   secret = random_id.tunnel_secret.b64_std
 }
 
-resource "cloudflare_tunnel_settings" "app_tunnel_config" {
+resource "cloudflare_tunnel_configuration" "app_tunnel_config" {
   tunnel_id = cloudflare_tunnel.app_tunnel.id
 
-  ingress = [
-    {
+  config {
+    ingress_rule {
       hostname = var.tunnel_public_hostname
       service = "http://localhost:${var.app_port}"
-    },
-    {
+    }
+
+    ingress_rule {
       service = "http_status:404"
     }
-  ]
+  }
 }
 
 # Tunnel CNAME – Proxied for WAF/Bot (v5: dns_record with content, ttl)
@@ -256,7 +256,7 @@ resource "cloudflare_certificate_pack" "advanced_cert" {
   cloudflare_branding = false
 }
 
-# GLOBAL LOAD BALANCING – Between app servers via tunnel (v5: fallback_pool/default_pools as id, rules list with expression)
+# GLOBAL LOAD BALANCING – Between app servers via tunnel (v5: fallback_pool/default_pools as id, rules block with expression)
 resource "cloudflare_load_balancer" "app_lb" {
   zone_id = cloudflare_zone.this[var.primary_zone_key].id
   name = var.tunnel_public_hostname
@@ -268,17 +268,15 @@ resource "cloudflare_load_balancer" "app_lb" {
   session_affinity = "ip_cookie"
   session_affinity_ttl = 14400
 
-  rules = [
-    {
-      name = "itar_block"
-      fixed_response = {
-        status_code = 403
-        message_body = "Access Denied – Restricted Country"
-      }
-      expression = "ip.geoip.country in ${jsonencode(var.itar_restricted_countries)}"
-      priority = 1
+  rules {
+    name = "itar_block"
+    fixed_response {
+      status_code = 403
+      message_body = "Access Denied – Restricted Country"
     }
-  ]
+    expression = "ip.geoip.country in ${jsonencode(var.itar_restricted_countries)}"
+    priority = 1
+  }
 }
 
 resource "cloudflare_load_balancer_pool" "app_pool" {
