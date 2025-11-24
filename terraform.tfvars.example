@@ -1,19 +1,21 @@
-cloudflare_account_id = "0123456789abcdef0123456789abcdef"
+cloudflare_api_token = "HDdvEXupsWDo6CJccFGe2sc1QQBXIk5EimjTWXGl"  # Paste your API token here (the full string from dashboard)
+
+cloudflare_account_id = "ad3790b375697450c85ec4d91c53d6d8"  # Paste your account ID here (32-char string from dashboard sidebar)
 
 zones = {
-  main = { domain = "example.com" }
-  corp = { domain = "example.io" }
+  test = { domain = "example.com" }  # Test domain – auto-approved
 }
 
 dns_records = {
-  main = [
-    { hostname = "",    type = "A",     target = "203.0.113.10" },              # apex – needs CNAME flattening at current DNS
-    { hostname = "www", type = "CNAME", target = "origin.example.com" },
-    { hostname = "app", type = "CNAME", target = "app-lb.example.com" },
-    { hostname = "api", type = "CNAME", target = "api.example.com" },
-  ]
-  corp = [
-    { hostname = "",    type = "A",     target = "198.51.100.20" },
-    { hostname = "www", type = "CNAME", target = "origin.example.io" },
+  test = [
+    { hostname = "time", type = "CNAME", target = "example.com" },  # Test proxied record
   ]
 }
+
+enable_tunnel = true
+tunnel_public_hostname = "time.example.com"
+app_port = 80
+proxy_vm_app_server_ips = ["127.0.0.1", "127.0.0.1"]  # Placeholders for test
+enable_advanced_cert = true
+itar_restricted_countries = ["CU", "IR", "KP", "SY", "RU", "BY", "VE"]
+primary_zone_key = "test"
