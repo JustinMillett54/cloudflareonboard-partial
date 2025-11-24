@@ -1,11 +1,10 @@
-# main.tf – FULLY WORKING with Cloudflare Provider v5.13 (November 2025)
-# All v5.13 breaking changes correctly applied — tested and verified
-
 provider "cloudflare" {
   api_token = var.cloudflare_api_token
 }
 
+# ================================
 # ZONES – Partial (CNAME) setup
+# ================================
 resource "cloudflare_zone" "this" {
   for_each = var.zones
 
@@ -13,10 +12,12 @@ resource "cloudflare_zone" "this" {
     id = var.cloudflare_account_id
   }
   name = each.value.domain
-  type = "partial"
+  type = "partial"  # Change to "full" for free test
 }
 
-# DNS RECORDS (proxied + non-proxied)
+# ================================
+# DNS RECORDS – Proxied only
+# ================================
 resource "cloudflare_dns_record" "records" {
   for_each = {
     for pair in local.record_pairs : "${pair.zone_key}.${pair.record.hostname}.${pair.record.type}" => pair
@@ -28,7 +29,7 @@ resource "cloudflare_dns_record" "records" {
   content = each.value.record.target
   proxied = each.value.record.proxied
   ttl     = each.value.record.proxied ? 1 : (each.value.record.ttl != null ? each.value.record.ttl : 300)
-  comment = "Terraform-managed"
+  comment = "Terraform-managed – partial setup"
 }
 
 locals {
@@ -36,25 +37,29 @@ locals {
     for zone_key, records in var.dns_records : [
       for record in records : {
         zone_key = zone_key
-        record   = record
+        record = record
       }
     ]
   ])
 }
 
-# BOT MANAGEMENT (Enterprise)
+# ================================
+# BOT MANAGEMENT – Safe challenge mode
+# ================================
 resource "cloudflare_bot_management" "this" {
   for_each = cloudflare_zone.this
   zone_id  = each.value.id
 
-  enable_js                 = true
-  auto_update_model         = true
+  enable_js               = true
+  auto_update_model       = true
   sbfm_definitely_automated = "managed_challenge"
   sbfm_likely_automated     = "managed_challenge"
   sbfm_verified_bots        = "allow"
 }
 
-# MANAGED WAF + OWASP – Log only
+# ================================
+# MANAGED WAF + OWASP – Log-only start
+# ================================
 resource "cloudflare_ruleset" "managed_waf_log" {
   for_each = cloudflare_zone.this
   zone_id  = each.value.id
@@ -67,7 +72,7 @@ resource "cloudflare_ruleset" "managed_waf_log" {
       action      = "log"
       expression  = "true"
       enabled     = true
-      description = "Cloudflare Managed Ruleset"
+      description = "Cloudflare Managed Ruleset – LOG"
       execute = {
         id = "efb7b8c949ac4650a0e52a9c2d13d3bb"
       }
@@ -76,7 +81,7 @@ resource "cloudflare_ruleset" "managed_waf_log" {
       action      = "log"
       expression  = "true"
       enabled     = true
-      description = "OWASP Core Ruleset"
+      description = "OWASP Core Ruleset – LOG"
       execute = {
         id = "4814384a9e5d4991b9815d64d2d2d2d2"
       }
@@ -84,19 +89,44 @@ resource "cloudflare_ruleset" "managed_waf_log" {
   ]
 }
 
-# Used only for validation – filter is a block in v5.13
 data "cloudflare_rulesets" "owasp" {
   for_each = cloudflare_zone.this
   zone_id  = each.value.id
 
-  filter {
-    kind  = "managed"
-    name  = "Cloudflare OWASP Core Ruleset"
+  filter = {
+    kind = "managed"
+    name = "Cloudflare OWASP Core Ruleset"
     phase = "http_request_firewall_managed"
   }
 }
 
-# RATE LIMITING – Log only
+# ================================
+# WAF EXCEPTIONS – For false positives
+# ================================
+resource "cloudflare_ruleset" "waf_exceptions" {
+  for_each = cloudflare_zone.this
+  zone_id  = each.value.id
+  name     = "WAF Exceptions – false positives"
+  kind     = "zone"
+  phase    = "http_request_firewall_managed"
+
+  rules = [
+    # Example: Skip a noisy rule
+    # {
+    #   action      = "skip"
+    #   expression  = "true"
+    #   description = "Skip rule 981173 – Wordpress false positive"
+    #   enabled     = true
+    #   action_parameters = {
+    #     id = "981173"
+    #   }
+    # }
+  ]
+}
+
+# ================================
+# RATE LIMITING – Log-only start
+# ================================
 resource "cloudflare_ruleset" "rate_limiting" {
   for_each = cloudflare_zone.this
   zone_id  = each.value.id
@@ -107,7 +137,7 @@ resource "cloudflare_ruleset" "rate_limiting" {
   rules = [
     {
       enabled     = true
-      description = "Login protection"
+      description = "Login protection – safe start"
       expression  = "(http.request.uri.path contains \"/login\")"
       action      = "log"
       ratelimit = {
@@ -120,67 +150,72 @@ resource "cloudflare_ruleset" "rate_limiting" {
   ]
 }
 
-# ZONE HARDENING – v5.13 correct syntax
+# ZONE HARDENING SETTINGS (v5.13: singular resource)
 resource "cloudflare_zone_setting" "ssl" {
-  for_each   = cloudflare_zone.this
-  zone_id    = each.value.id
+  for_each = cloudflare_zone.this
+  zone_id = each.value.id
   setting_id = "ssl"
-  value      = "strict"
+  value = "strict"
 }
 
 resource "cloudflare_zone_setting" "always_use_https" {
-  for_each   = cloudflare_zone.this
-  zone_id    = each.value.id
+  for_each = cloudflare_zone.this
+  zone_id = each.value.id
   setting_id = "always_use_https"
-  value      = "on"
+  value = "on"
 }
 
 resource "cloudflare_zone_setting" "min_tls_version" {
-  for_each   = cloudflare_zone.this
-  zone_id    = each.value.id
+  for_each = cloudflare_zone.this
+  zone_id = each.value.id
   setting_id = "min_tls_version"
-  value      = "1.3"
+  value = "1.3"
 }
 
 resource "cloudflare_zone_setting" "tls_1_3" {
-  for_each   = cloudflare_zone.this
-  zone_id    = each.value.id
+  for_each = cloudflare_zone.this
+  zone_id = each.value.id
   setting_id = "tls_1_3"
-  value      = "on"
+  value = "on"
 }
 
 resource "cloudflare_zone_setting" "automatic_https_rewrites" {
-  for_each   = cloudflare_zone.this
-  zone_id    = each.value.id
+  for_each = cloudflare_zone.this
+  zone_id = each.value.id
   setting_id = "automatic_https_rewrites"
-  value      = "on"
+  value = "on"
 }
 
 resource "cloudflare_zone_setting" "security_level" {
-  for_each   = cloudflare_zone.this
-  zone_id    = each.value.id
+  for_each = cloudflare_zone.this
+  zone_id = each.value.id
   setting_id = "security_level"
-  value      = "high"
+  value = "high"
 }
 
 resource "cloudflare_zone_setting" "brotli" {
-  for_each   = cloudflare_zone.this
-  zone_id    = each.value.id
+  for_each = cloudflare_zone.this
+  zone_id = each.value.id
   setting_id = "brotli"
-  value      = "on"
+  value = "on"
 }
 
 resource "cloudflare_zone_setting" "websocket" {
-  for_each   = cloudflare_zone.this
-  zone_id    = each.value.id
+  for_each = cloudflare_zone.this
+  zone_id = each.value.id
   setting_id = "websocket"
-  value      = "on"
+  value = "on"
 }
 
-# CLOUDFLARED TUNNEL – v5.13 correct resource names
+# CLOUDFLARED TUNNEL – Zero Trust (v5.13 syntax)
+resource "random_id" "tunnel_secret" {
+  byte_length = 32
+}
+
 resource "cloudflare_zero_trust_tunnel_cloudflared" "app_tunnel" {
   account_id = var.cloudflare_account_id
   name       = "app-to-cloudflare-tunnel"
+  secret     = random_id.tunnel_secret.b64_std
 }
 
 resource "cloudflare_zero_trust_tunnel_cloudflared_config" "app_tunnel_config" {
@@ -224,45 +259,45 @@ resource "cloudflare_certificate_pack" "advanced_cert" {
 
 # GLOBAL LOAD BALANCER
 resource "cloudflare_load_balancer" "app_lb" {
-  zone_id       = cloudflare_zone.this[var.primary_zone_key].id
-  name          = var.tunnel_public_hostname
+  zone_id = cloudflare_zone.this[var.primary_zone_key].id
+  name = var.tunnel_public_hostname
   fallback_pool = cloudflare_load_balancer_pool.app_pool.id
   default_pools = [cloudflare_load_balancer_pool.app_pool.id]
-  proxied       = true
+  proxied = true
 
-  steering_policy      = "geo"
-  session_affinity     = "ip_cookie"
+  steering_policy = "geo"
+  session_affinity = "ip_cookie"
   session_affinity_ttl = 14400
 
   rules = [
     {
-      name           = "itar_block"
+      name = "itar_block"
       fixed_response = {
-        status_code  = 403
+        status_code = 403
         message_body = "Access Denied – Restricted Country"
       }
       expression = "ip.geoip.country in ${jsonencode(var.itar_restricted_countries)}"
-      priority   = 1
+      priority = 1
     }
   ]
 }
 
 resource "cloudflare_load_balancer_pool" "app_pool" {
   account_id = var.cloudflare_account_id
-  name       = "app-pool"
+  name = "app-pool"
 
   origins = [
     {
-      name    = "app-server-1"
+      name = "app-server-1"
       address = var.proxy_vm_app_server_ips[0]
       enabled = true
-      weight  = 1
+      weight = 1
     },
     {
-      name    = "app-server-2"
+      name = "app-server-2"
       address = var.proxy_vm_app_server_ips[1]
       enabled = true
-      weight  = 1
+      weight = 1
     }
   ]
 
@@ -270,11 +305,11 @@ resource "cloudflare_load_balancer_pool" "app_pool" {
 }
 
 resource "cloudflare_load_balancer_monitor" "app_monitor" {
-  account_id     = var.cloudflare_account_id
+  account_id = var.cloudflare_account_id
   expected_codes = "2xx,3xx"
-  method         = "GET"
-  path           = "/health"
-  interval       = 60
-  timeout        = 5
-  retries        = 2
+  method = "GET"
+  path = "/health"
+  interval = 60
+  timeout = 5
+  retries = 2
 }
