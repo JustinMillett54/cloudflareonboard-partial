@@ -26,7 +26,7 @@ sudo apt update
 sudo apt install -y haproxy wget
 wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -O /tmp/cloudflared.deb
 sudo dpkg -i /tmp/cloudflared.deb
-sudo cloudflared service install ${nonsensitive(cloudflare_tunnel.app_tunnel.tunnel_token)}
+sudo cloudflared service install ${nonsensitive(cloudflare_zero_trust_tunnel_cloudflared.app_tunnel.tunnel_token)}
 sudo systemctl enable --now cloudflared
 
 sudo tee /etc/haproxy/haproxy.cfg > /dev/null <<EOF
@@ -50,7 +50,7 @@ EOF
 
 sudo systemctl restart haproxy
 
-Verify: cloudflared tunnel info ${cloudflare_tunnel.app_tunnel.id}
+Verify: cloudflared tunnel info ${cloudflare_zero_trust_tunnel_cloudflared.app_tunnel.id}
 
 EOT
 }
