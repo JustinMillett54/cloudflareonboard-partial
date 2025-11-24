@@ -3,8 +3,8 @@
 # For advanced: Add vars for more zones, custom WAF expressions, etc.
 
 variable "cloudflare_api_token" {
-  type      = string
-  sensitive = true
+  type        = string
+  sensitive   = true
   description = "Scoped API token with Zone:Edit, Account:Edit permissions – create in Cloudflare dashboard"
 }
 
@@ -22,11 +22,11 @@ variable "zones" {
 
 variable "dns_records" {
   type = map(list(object({
-    hostname = string   # "" for apex, "www" for subdomains
-    type     = string   # "A", "CNAME", etc.
-    target   = string   # Origin IP or hostname
-    proxied  = optional(bool, true)  # True = orange cloud (proxy through Cloudflare)
-    ttl      = optional(number)      # Auto if proxied; set for gray cloud
+    hostname = string               # "" for apex, "www" for subdomains
+    type     = string               # "A", "CNAME", etc.
+    target   = string               # Origin IP or hostname
+    proxied  = optional(bool, true) # True = orange cloud (proxy through Cloudflare)
+    ttl      = optional(number)     # Auto if proxied; set for gray cloud
   })))
   description = "Proxied records per zone – only managed in CF for partial setup"
 }
