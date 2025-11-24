@@ -1,46 +1,65 @@
-# outputs.tf – PARTIAL / CNAME SETUP
+# outputs.tf – Post-apply instructions
+# Options: Add more for cert details or LB IDs
+
 output "zone_ids" {
-  description = "Cloudflare Zone IDs – saved forever in Terraform state"
+  description = "Zone IDs for reference – saved in state"
   value       = { for k, z in cloudflare_zone.this : z.zone => z.id }
 }
 
 output "partial_cname_instructions" {
-  description = "Exact records the client MUST add in their current authoritative DNS provider"
+  description = "CNAMEs to add in external DNS"
   value = <<EOT
-
-=== PARTIAL (CNAME) SETUP – CLIENT ACTION REQUIRED ===
-
-Add these records in your CURRENT DNS provider (Route53, GoDaddy, etc.):
-
+Add these in current DNS provider:
 ${join("\n", [
   for r in cloudflare_record.records : 
-  format("  %-25s %-8s → %s.cdn.cloudflare.net (proxied = yes)",
-    r.hostname == "@" ? r.zone_name : "${r.hostname}.${r.zone_name}",
+  format("%s (%s) → %s.cdn.cloudflare.net (proxied)", 
+    r.name == "@" ? r.zone_name : "${r.name}.${r.zone_name}",
     r.type,
     r.zone_name
   )
 ])}
+EOT
+}
 
-As soon as these propagate (usually < 5 min), all traffic flows through Cloudflare WAF, Bot Management, Rate Limiting, etc.
+output "cloudflared_deployment_guide" {
+  description = "Script for dedicated proxy VMs"
+  value = <<EOT
+Run on BOTH proxy VMs:
+
+sudo apt update
+sudo apt install -y haproxy wget
+wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -O /tmp/cloudflared.deb
+sudo dpkg -i /tmp/cloudflared.deb
+sudo cloudflared service install ${nonsensitive(cloudflare_tunnel.app_tunnel.tunnel_token)}
+sudo systemctl enable --now cloudflared
+
+sudo tee /etc/haproxy/haproxy.cfg > /dev/null <<EOF
+global
+    maxconn 4096
+
+defaults
+    mode http
+    timeout connect 5s
+    timeout client 50s
+    timeout server 50s
+
+frontend fe_app
+    bind *:${var.app_port}
+    default_backend be_apps
+
+backend be_apps
+    balance roundrobin
+    ${join("\n    ", [for ip in var.proxy_vm_app_server_ips : "server app-${index(var.proxy_vm_app_server_ips, ip)+1} ${ip}:${var.app_port} check"])}
+EOF
+
+sudo systemctl restart haproxy
 
 EOT
 }
 
 output "management_forever" {
+  description = "Ongoing instructions"
   value = <<EOT
-
-=== CLOUDFLARE IS NOW 100% MANAGED BY TERRAFORM ===
-
-Zone IDs (above) are saved forever – never look them up again.
-
-From now on, any change = edit code → terraform apply
-Examples:
-  • Add new proxied subdomain
-  • Turn LOG → BLOCK on WAF / Rate Limiting
-  • Disable a noisy Managed Rule
-  • Adjust Bot Management, SSL, etc.
-
-No nameserver change ever needed.
-
+All managed by Terraform. Edit code → terraform apply to change.
 EOT
 }
