@@ -1,21 +1,41 @@
-cloudflare_api_token = "HDdvEXupsWDo6CJccFGe2sc1QQBXIk5EimjTWXGl"  # Paste your API token here (the full string from dashboard)
+# terraform.tfvars – Test Configuration for example.com (Full Mode for Free Plan)
+# Account and Token (Paste Your Values Here – Sensitive, Local Only)
+cloudflare_api_token = "HDdvEXupsWDo6CJccFGe2sc1QQBXIk5EimjTWXGl"  # Your verified token from dashboard
 
-cloudflare_account_id = "ad3790b375697450c85ec4d91c53d6d8"  # Paste your account ID here (32-char string from dashboard sidebar)
+cloudflare_account_id = "ad3790b375697450c85ec4d91c53d6d8"  # Your account ID from dashboard sidebar
 
+# Zones – Test with example.com (auto-approved IANA domain)
 zones = {
-  test = { domain = "example.com" }  # Test domain – auto-approved
+  test = { domain = "example.com" }
 }
 
+# DNS Records – Mix of Proxied (orange cloud for security/LB) and Unproxied (gray cloud for email/verification)
+# Proxied: time.example.com (main app via tunnel), api.example.com (API), www.example.com (web), timecard.example.com (sub-app)
+# Unproxied: MX (email), TXT (SPF/DMARC), CAA (cert policy), NS (subdomain delegation)
 dns_records = {
   test = [
-    { hostname = "time", type = "CNAME", target = "example.com" },  # Test proxied record
+    # Proxied Records (orange cloud – WAF, Bot, Rate Limiting, LB apply)
+    { hostname = "time", type = "CNAME", target = "example.com", proxied = true },  # Main time app via tunnel
+    { hostname = "api", type = "CNAME", target = "api.example.com", proxied = true },  # API endpoints
+    { hostname = "www", type = "CNAME", target = "www3.example.com", proxied = true },  # Web frontend (aliases to www3)
+    { hostname = "timecard", type = "A", target = "203.0.113.10", proxied = true },  # Timecard sub-app (direct IP)
+
+    # Unproxied Records (gray cloud – DNS only, no proxy/WAF)
+    { hostname = "", type = "MX", target = "10 mail.example.com", proxied = false, ttl = 3600 },  # Email MX (e.g., Google Workspace)
+    { hostname = "", type = "TXT", target = "v=spf1 include:_spf.google.com ~all", proxied = false },  # SPF record for email
+    { hostname = "", type = "TXT", target = "v=DMARC1; p=quarantine; rua=mailto:dmarc@faithtechinc.com", proxied = false },  # DMARC for email security
+    { hostname = "dev", type = "NS", target = "ns1.internaldns.example.com", proxied = false },  # Delegate dev subdomain to internal DNS
+    { hostname = "", type = "CAA", target = "0 issue \"letsencrypt.org;accounturi=https://acme-v02.api.letsencrypt.org/acme/acct/12345\"", proxied = false }  # Cert policy (CAA record)
   ]
 }
 
+# Tunnel and HA Pair (Outputs script for VMs)
 enable_tunnel = true
-tunnel_public_hostname = "time.example.com"
-app_port = 80
-proxy_vm_app_server_ips = ["127.0.0.1", "127.0.0.1"]  # Placeholders for test
-enable_advanced_cert = true
-itar_restricted_countries = ["CU", "IR", "KP", "SY", "RU", "BY", "VE"]
-primary_zone_key = "test"
+tunnel_public_hostname = "time.example.com"  # Public entry for app
+app_port = 80  # Local port on proxy VMs
+proxy_vm_app_server_ips = ["127.0.0.1", "127.0.0.1"]  # Test placeholders – use real private IPs for client
+
+# Security and LB Options
+enable_advanced_cert = true  # Dedicated certs (Universal fallback on free)
+itar_restricted_countries = ["CU", "IR", "KP", "SY", "RU", "BY", "VE"]  # ITAR blocks in LB rules
+primary_zone_key = "test"  # Zone key for LB/CNAME placement
