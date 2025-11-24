@@ -1,5 +1,5 @@
 # main.tf – Verified v5.13 Syntax (November 2025)
-# Fixes from docs: account object for zone; content for dns_record; sbfm_ only for bot; rules list arg for ruleset; filter arg object for data; zone_setting singular with for_each/setting_id/value; zero_trust_tunnel; zero_trust_tunnel_settings with ingress list arg; google for cert; fallback_pool/default_pools as id; origins list arg for pool; account_id for monitor
+# From docs: filter block for data rulesets; for_each for zone_setting singular; zero_trust_tunnel_cloudflared; zero_trust_tunnel_cloudflared_config with config/ingress_rule block; origins list arg for pool; content for dns_record; sbfm_ for bot; rules list arg for ruleset; google for cert; fallback_pool/default_pools as id; account_id for monitor
 
 provider "cloudflare" {
   api_token = var.cloudflare_api_token
@@ -88,7 +88,7 @@ data "cloudflare_rulesets" "owasp" {
   for_each = cloudflare_zone.this
   zone_id = each.value.id
 
-  filter = {
+  filter {
     kind = "managed"
     name = "Cloudflare OWASP Core Ruleset"
     phase = "http_request_firewall_managed"
@@ -206,29 +206,30 @@ resource "cloudflare_zone_setting" "websocket" {
   value = "on"
 }
 
-# CLOUDFLARED TUNNEL – Zero-trust reverse proxy (v5: cloudflare_zero_trust_tunnel, zero_trust_tunnel_settings with ingress list arg)
+# CLOUDFLARED TUNNEL – Zero-trust reverse proxy (v5: cloudflare_zero_trust_tunnel_cloudflared, zero_trust_tunnel_cloudflared_config with config/ingress_rule block)
 resource "random_id" "tunnel_secret" {
   byte_length = 32
 }
 
-resource "cloudflare_zero_trust_tunnel" "app_tunnel" {
+resource "cloudflare_zero_trust_tunnel_cloudflared" "app_tunnel" {
   account_id = var.cloudflare_account_id
   name = "app-to-cloudflare-tunnel"
   secret = random_id.tunnel_secret.b64_std
 }
 
-resource "cloudflare_zero_trust_tunnel_settings" "app_tunnel_config" {
-  tunnel_id = cloudflare_zero_trust_tunnel.app_tunnel.id
+resource "cloudflare_zero_trust_tunnel_cloudflared_config" "app_tunnel_config" {
+  tunnel_id = cloudflare_zero_trust_tunnel_cloudflared.app_tunnel.id
 
-  ingress = [
-    {
+  config {
+    ingress_rule {
       hostname = var.tunnel_public_hostname
       service = "http://localhost:${var.app_port}"
-    },
-    {
+    }
+
+    ingress_rule {
       service = "http_status:404"
     }
-  ]
+  }
 }
 
 # Tunnel CNAME – Proxied for WAF/Bot (v5: dns_record with content, ttl)
@@ -236,7 +237,7 @@ resource "cloudflare_dns_record" "tunnel_cname" {
   zone_id = cloudflare_zone.this[var.primary_zone_key].id
   name = split(".", var.tunnel_public_hostname)[0]
   type = "CNAME"
-  content = "${cloudflare_zero_trust_tunnel.app_tunnel.id}.cfargotunnel.com"
+  content = "${cloudflare_zero_trust_tunnel_cloudflared.app_tunnel.id}.cfargotunnel.com"
   proxied = true
   ttl = 1
   comment = "Tunnel CNAME – Terraform-managed"
