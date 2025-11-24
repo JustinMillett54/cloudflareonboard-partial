@@ -1,23 +1,23 @@
-# main.tf – Cloudflare v5 Syntax (Fixed for Errors)
-# Changes from v4: zone → name; account_id → account; tunnels under zero_trust namespace; added account_id to monitor
+# main.tf – Fixed for Cloudflare v5.12 (November 2025)
+# Changes: account (not account_id) for zone; origins as arg (not block) for pool; tunnel_configuration (v5 rename); added account_id to monitor
 
 provider "cloudflare" {
   api_token = var.cloudflare_api_token
 }
 
 # ================================
-# ZONES – Partial (CNAME) setup (v5: uses 'name' not 'zone')
+# ZONES – Partial setup (v5: 'account' required, 'name' not 'zone')
 # ================================
 resource "cloudflare_zone" "this" {
   for_each = var.zones
 
-  account_id = var.cloudflare_account_id  # v5 requires this
-  name       = each.value.domain  # v5 uses 'name' instead of 'zone'
-  type       = "partial"  # No NS change – Pro/Business+ required
+  account = var.cloudflare_account_id  # v5 required – string account ID
+  name    = each.value.domain  # v5 uses 'name' instead of 'zone'
+  type    = "partial"  # Pro/Business+ required; change to "full" for free test
 }
 
 # ================================
-# DNS RECORDS – Proxied only (v5: zone_id unchanged)
+# DNS RECORDS – Proxied only (v5: unchanged)
 # ================================
 resource "cloudflare_record" "records" {
   for_each = {
@@ -45,7 +45,7 @@ locals {
 }
 
 # ================================
-# BOT MANAGEMENT – Safe challenge mode (v5: unchanged)
+# BOT MANAGEMENT – Safe challenge mode (v5: unchanged; Enterprise-only)
 # ================================
 resource "cloudflare_bot_management" "this" {
   for_each = cloudflare_zone.this
@@ -60,7 +60,7 @@ resource "cloudflare_bot_management" "this" {
 }
 
 # ================================
-# MANAGED WAF + OWASP – Log-only start (v5: rules syntax unchanged)
+# MANAGED WAF + OWASP – Log-only start (v5: unchanged)
 # ================================
 resource "cloudflare_ruleset" "managed_waf_log" {
   for_each = cloudflare_zone.this
@@ -167,30 +167,29 @@ resource "cloudflare_zone_settings_override" "this" {
 }
 
 # ================================
-# CLOUDFLARED TUNNEL – Zero-trust reverse proxy (v5: renamed to zero_trust_tunnel)
+# CLOUDFLARED TUNNEL – Zero-trust reverse proxy (v5: cloudflare_tunnel, config is tunnel_configuration)
 # ================================
 resource "random_id" "tunnel_secret" {
   byte_length = 32
 }
 
-resource "cloudflare_zero_trust_tunnel" "app_tunnel" {
-  account_id = var.cloudflare_account_id  # v5 requires this
+resource "cloudflare_tunnel" "app_tunnel" {
+  account_id = var.cloudflare_account_id
   name       = "app-to-cloudflare-tunnel"
-  secret     = random_id.tunnel_secret.b64_std  # v5 unchanged
+  secret     = random_id.tunnel_secret.b64_std
 }
 
-resource "cloudflare_zero_trust_tunnel_config" "app_tunnel_config" {
-  tunnel_id = cloudflare_zero_trust_tunnel.app_tunnel.id  # v5 renamed resource
+resource "cloudflare_tunnel_configuration" "app_tunnel_config" {
+  account_id = var.cloudflare_account_id  # v5 required
+  tunnel_id  = cloudflare_tunnel.app_tunnel.id
 
-  config {
-    ingress_rule {
-      hostname = var.tunnel_public_hostname
-      service  = "http://localhost:${var.app_port}"
-    }
+  ingress_rule {
+    hostname = var.tunnel_public_hostname
+    service  = "http://localhost:${var.app_port}"
+  }
 
-    ingress_rule {
-      service = "http_status:404"
-    }
+  ingress_rule {
+    service = "http_status:404"
   }
 }
 
@@ -199,7 +198,7 @@ resource "cloudflare_record" "tunnel_cname" {
   zone_id = cloudflare_zone.this[var.primary_zone_key].id
   name    = split(".", var.tunnel_public_hostname)[0]
   type    = "CNAME"
-  value   = "${cloudflare_zero_trust_tunnel.app_tunnel.id}.cfargotunnel.com"  # Updated for v5 tunnel
+  value   = "${cloudflare_tunnel.app_tunnel.id}.cfargotunnel.com"
   proxied = true
   comment = "Tunnel CNAME – Terraform-managed"
 }
@@ -220,7 +219,7 @@ resource "cloudflare_certificate_pack" "advanced_cert" {
 }
 
 # ================================
-# GLOBAL LOAD BALANCING – Between app servers via tunnel (v5: monitor requires account_id)
+# GLOBAL LOAD BALANCING – Between app servers via tunnel (v5: origins as arg list)
 # ================================
 resource "cloudflare_load_balancer" "app_lb" {
   zone_id          = cloudflare_zone.this[var.primary_zone_key].id
@@ -252,17 +251,25 @@ resource "cloudflare_load_balancer" "app_lb" {
 
 resource "cloudflare_load_balancer_pool" "app_pool" {
   name = "app-pool"
-  origins {
-    name    = "tunnel-origin"
-    address = "${cloudflare_zero_trust_tunnel.app_tunnel.id}.cfargotunnel.com"  # v5 tunnel ID
-    enabled = true
-    weight  = 1
-  }
+  origins = [  # v5: origins as argument list, not block
+    {
+      name    = "app-server-1"
+      address = var.proxy_vm_app_server_ips[0]
+      enabled = true
+      weight  = 1
+    },
+    {
+      name    = "app-server-2"
+      address = var.proxy_vm_app_server_ips[1]
+      enabled = true
+      weight  = 1
+    }
+  ]
   monitor = cloudflare_load_balancer_monitor.app_monitor.id
 }
 
 resource "cloudflare_load_balancer_monitor" "app_monitor" {
-  account_id = var.cloudflare_account_id  # v5 required arg
+  account_id = var.cloudflare_account_id  # v5 required
   expected_codes = "2xx, 3xx"
   method         = "GET"
   path           = "/health"
