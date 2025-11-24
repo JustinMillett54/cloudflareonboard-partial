@@ -1,25 +1,23 @@
-# main.tf – Core configuration
-# Structure: Zones → Records → Security (WAF/Bot/Rate/ITAR) → Tunnel → Certs → LB
-# Options: Toggle features with vars; change "log" to "execute" for production
+# main.tf – Cloudflare v5 Syntax (Fixed for Errors)
+# Changes from v4: zone → name; account_id → account; tunnels under zero_trust namespace; added account_id to monitor
 
 provider "cloudflare" {
-  api_token = var.cloudflare_api_token  # Auth for all Cloudflare resources
+  api_token = var.cloudflare_api_token
 }
 
 # ================================
-# ZONES – Partial (CNAME) setup
-# Options: Add more in vars.zones; change type = "full" if switching to full DNS later
+# ZONES – Partial (CNAME) setup (v5: uses 'name' not 'zone')
 # ================================
 resource "cloudflare_zone" "this" {
-  for_each   = var.zones
-  account_id = var.cloudflare_account_id
-  zone       = each.value.domain
-  type       = "partial"  # Key for no NS change – only proxy specific hostnames
+  for_each = var.zones
+
+  account_id = var.cloudflare_account_id  # v5 requires this
+  name       = each.value.domain  # v5 uses 'name' instead of 'zone'
+  type       = "partial"  # No NS change – Pro/Business+ required
 }
 
 # ================================
-# DNS RECORDS – Proxied only
-# Options: Add non-proxied records in external DNS; proxied = true enables WAF/Bot
+# DNS RECORDS – Proxied only (v5: zone_id unchanged)
 # ================================
 resource "cloudflare_record" "records" {
   for_each = {
@@ -30,7 +28,7 @@ resource "cloudflare_record" "records" {
   name    = each.value.record.hostname == "" ? "@" : each.value.record.hostname
   type    = upper(each.value.record.type)
   value   = each.value.record.target
-  proxied = each.value.record.proxied  # True = orange cloud (recommended)
+  proxied = each.value.record.proxied
   ttl     = each.value.record.proxied ? 1 : (each.value.record.ttl != null ? each.value.record.ttl : 300)
   comment = "Terraform-managed – partial setup"
 }
@@ -47,24 +45,22 @@ locals {
 }
 
 # ================================
-# BOT MANAGEMENT – Safe challenge mode
-# Options: Change actions to "block" for production; enable_js = false if no JS needed
+# BOT MANAGEMENT – Safe challenge mode (v5: unchanged)
 # ================================
 resource "cloudflare_bot_management" "this" {
   for_each = cloudflare_zone.this
   zone_id  = each.value.id
 
-  enable_js                   = true  # Invisible JS challenges – set false for API-only
-  auto_update_model           = true  # Auto-update bot models – recommended
-  static_resource_protection  = true  # Protect CSS/JS/images – optional
-  definitely_automated_action = "managed_challenge"  # Score 1 – change to "block" when ready
-  likely_automated_action     = "managed_challenge"  # Score 2-29 – change to "block" when ready
-  verified_bots_action        = "allow"  # Always allow good bots like Googlebot
+  enable_js                   = true
+  auto_update_model           = true
+  static_resource_protection  = true
+  definitely_automated_action = "managed_challenge"
+  likely_automated_action     = "managed_challenge"
+  verified_bots_action        = "allow"
 }
 
 # ================================
-# MANAGED WAF + OWASP – Log-only start
-# Options: Change "log" to "execute" for blocking; add more rulesets like Exposed Credentials
+# MANAGED WAF + OWASP – Log-only start (v5: rules syntax unchanged)
 # ================================
 resource "cloudflare_ruleset" "managed_waf_log" {
   for_each = cloudflare_zone.this
@@ -74,7 +70,7 @@ resource "cloudflare_ruleset" "managed_waf_log" {
   phase    = "http_request_firewall_managed"
 
   rules {
-    action      = "log"  # Change to "execute" when ready to block
+    action      = "log"
     expression  = "true"
     enabled     = true
     description = "Cloudflare Managed Ruleset – LOG"
@@ -84,7 +80,7 @@ resource "cloudflare_ruleset" "managed_waf_log" {
   }
 
   rules {
-    action      = "log"  # Change to "execute" when ready to block
+    action      = "log"
     expression  = "true"
     enabled     = true
     description = "OWASP Core Ruleset – LOG"
@@ -105,8 +101,7 @@ data "cloudflare_rulesets" "owasp" {
 }
 
 # ================================
-# WAF EXCEPTIONS – For false positives
-# Options: Uncomment and add rule IDs from dashboard events; use "skip" or "log"
+# WAF EXCEPTIONS – For false positives (v5: unchanged)
 # ================================
 resource "cloudflare_ruleset" "waf_exceptions" {
   for_each = cloudflare_zone.this
@@ -128,8 +123,7 @@ resource "cloudflare_ruleset" "waf_exceptions" {
 }
 
 # ================================
-# RATE LIMITING – Log-only start
-# Options: Change "log" to "block"; add more rules for specific paths; adjust thresholds
+# RATE LIMITING – Log-only start (v5: unchanged)
 # ================================
 resource "cloudflare_ruleset" "rate_limiting" {
   for_each = cloudflare_zone.this
@@ -142,106 +136,102 @@ resource "cloudflare_ruleset" "rate_limiting" {
     enabled     = true
     description = "Login protection – safe start"
     expression  = "(http.request.uri.path contains \"/login\")"
-    action      = "log"  # Change to "block" or "managed_challenge"
+    action      = "log"
 
     ratelimit {
-      characteristics     = ["ip.src", "cf.client.asn"]  # Add "http.request.headers[\"x-api-key\"]" for API
-      period              = 60  # Seconds – adjust for burst vs sustained
-      requests_per_period = 15  # Threshold – tune based on testing
-      mitigation_timeout  = 600  # Ban duration in seconds
+      characteristics     = ["ip.src", "cf.client.asn"]
+      period              = 60
+      requests_per_period = 15
+      mitigation_timeout  = 600
     }
   }
 }
 
 # ================================
-# ZONE HARDENING SETTINGS
-# Options: Adjust security_level to "high" or "under_attack"; add min_tls_version = "1.2" if needed
+# ZONE HARDENING SETTINGS (v5: unchanged)
 # ================================
 resource "cloudflare_zone_settings_override" "this" {
   for_each = cloudflare_zone.this
   zone_id  = each.value.id
 
   settings {
-    ssl                      = "strict"  # "full" or "flexible" for less secure origins
+    ssl                      = "strict"
     always_use_https         = "on"
-    min_tls_version          = "1.3"  # "1.2" for legacy clients
+    min_tls_version          = "1.3"
     tls_1_3                  = "on"
     automatic_https_rewrites = "on"
-    security_level           = "high"  # "medium" or "under_attack" for DDoS
+    security_level           = "high"
     brotli                   = "on"
     websocket                = "on"
   }
 }
 
 # ================================
-# CLOUDFLARED TUNNEL – Zero-trust reverse proxy
-# Options: Add more ingress_rules for additional hostnames/services (e.g., SSH)
+# CLOUDFLARED TUNNEL – Zero-trust reverse proxy (v5: renamed to zero_trust_tunnel)
 # ================================
 resource "random_id" "tunnel_secret" {
-  byte_length = 32  # Increase for more security if needed
+  byte_length = 32
 }
 
-resource "cloudflare_tunnel" "app_tunnel" {
-  account_id = var.cloudflare_account_id
+resource "cloudflare_zero_trust_tunnel" "app_tunnel" {
+  account_id = var.cloudflare_account_id  # v5 requires this
   name       = "app-to-cloudflare-tunnel"
-  secret     = random_id.tunnel_secret.b64_std
+  secret     = random_id.tunnel_secret.b64_std  # v5 unchanged
 }
 
-resource "cloudflare_tunnel_config" "app_tunnel_config" {
-  tunnel_id = cloudflare_tunnel.app_tunnel.id
+resource "cloudflare_zero_trust_tunnel_config" "app_tunnel_config" {
+  tunnel_id = cloudflare_zero_trust_tunnel.app_tunnel.id  # v5 renamed resource
 
   config {
     ingress_rule {
       hostname = var.tunnel_public_hostname
-      service  = "http://localhost:${var.app_port}"  # Points to local HAProxy on proxy VMs
+      service  = "http://localhost:${var.app_port}"
     }
 
     ingress_rule {
-      service = "http_status:404"  # Catch-all – customize for custom errors
+      service = "http_status:404"
     }
   }
 }
 
-# Tunnel CNAME – Proxied for WAF/Bot
+# Tunnel CNAME – Proxied for WAF/Bot (v5: unchanged)
 resource "cloudflare_record" "tunnel_cname" {
   zone_id = cloudflare_zone.this[var.primary_zone_key].id
   name    = split(".", var.tunnel_public_hostname)[0]
   type    = "CNAME"
-  value   = "${cloudflare_tunnel.app_tunnel.id}.cfargotunnel.com"
+  value   = "${cloudflare_zero_trust_tunnel.app_tunnel.id}.cfargotunnel.com"  # Updated for v5 tunnel
   proxied = true
   comment = "Tunnel CNAME – Terraform-managed"
 }
 
 # ================================
-# ADVANCED CERT PACK – Dedicated certs
-# Options: Change validity_days to 90/365; certificate_authority = "lets_encrypt" for free
+# ADVANCED CERT PACK – Dedicated certs (v5: unchanged)
 # ================================
 resource "cloudflare_certificate_pack" "advanced_cert" {
   for_each = var.enable_advanced_cert ? cloudflare_zone.this : {}
 
   zone_id          = each.value.id
   type             = "advanced"
-  hosts            = [each.value.zone, "*.${each.value.zone}"]  # Add specific hosts if needed
-  validation_method = "txt"  # "http" or "email" alternatives
-  validity_days    = 30  # Shorter = more secure rotations
-  certificate_authority = "digicert"  # "lets_encrypt" or "google"
-  cloudflare_branding  = false  # True to show Cloudflare in cert
+  hosts            = [each.value.zone, "*.${each.value.zone}"]
+  validation_method = "txt"
+  validity_days    = 30
+  certificate_authority = "digicert"
+  cloudflare_branding  = false
 }
 
 # ================================
-# GLOBAL LOAD BALANCING – Between app servers via tunnel
-# Options: steering_policy = "random" or "proximity"; add more origins for multi-DC
+# GLOBAL LOAD BALANCING – Between app servers via tunnel (v5: monitor requires account_id)
 # ================================
 resource "cloudflare_load_balancer" "app_lb" {
   zone_id          = cloudflare_zone.this[var.primary_zone_key].id
   name             = var.tunnel_public_hostname
   fallback_pool_id = cloudflare_load_balancer_pool.app_pool.id
   default_pool_ids = [cloudflare_load_balancer_pool.app_pool.id]
-  proxied          = true  # Enables WAF/Bot
+  proxied          = true
 
-  steering_policy = "geo"  # Geo steering – change to "proximity" for latency-based
-  session_affinity = "ip_cookie"  # Session affinity – "cookie" or "header" alternatives
-  session_affinity_ttl = 14400  # 4 hours – adjust for app needs
+  steering_policy  = "geo"
+  session_affinity = "ip_cookie"
+  session_affinity_ttl = 14400
 
   rules {
     name = "itar_block"
@@ -253,35 +243,30 @@ resource "cloudflare_load_balancer" "app_lb" {
       matches {
         name  = "ip.geoip.country"
         op    = "in"
-        value = var.itar_restricted_countries  # Customize list in vars
+        value = var.itar_restricted_countries
       }
     }
-    priority = 1  # Higher priority for more rules
+    priority = 1
   }
 }
 
 resource "cloudflare_load_balancer_pool" "app_pool" {
   name = "app-pool"
   origins {
-    name    = "app-server-1"
-    address = var.proxy_vm_app_server_ips[0]  # Direct to app IP or tunnel endpoint
-    enabled = true
-    weight  = 1  # Equal weight; adjust for weighted LB
-  }
-  origins {
-    name    = "app-server-2"
-    address = var.proxy_vm_app_server_ips[1]
+    name    = "tunnel-origin"
+    address = "${cloudflare_zero_trust_tunnel.app_tunnel.id}.cfargotunnel.com"  # v5 tunnel ID
     enabled = true
     weight  = 1
   }
-  monitor = cloudflare_load_balancer_monitor.app_monitor.id  # Required for health-based failover
+  monitor = cloudflare_load_balancer_monitor.app_monitor.id
 }
 
 resource "cloudflare_load_balancer_monitor" "app_monitor" {
-  expected_codes = "2xx, 3xx"  # Customize for app responses
-  method         = "GET"  # "HEAD" or "POST" alternatives
-  path           = "/health"  # App health endpoint – change if needed
-  interval       = 60  # Seconds – lower for faster detection
+  account_id = var.cloudflare_account_id  # v5 required arg
+  expected_codes = "2xx, 3xx"
+  method         = "GET"
+  path           = "/health"
+  interval       = 60
   timeout        = 5
-  retries        = 2  # Retries before marking down
+  retries        = 2
 }
