@@ -1,25 +1,25 @@
-# main.tf – Verified for Cloudflare v5.12 (November 2025)
-# Syntax from official docs: account object for zone; content for dns_record; sbfm_ for bot; rules list for ruleset; filter object for data; zone_settings (not override); ingress list for tunnel_config; google for cert authority; fallback_pool/default_pools for lb; origins list for pool
+# main.tf – Fixed v5.12 Syntax (November 2025)
+# All errors addressed: account object for zone; content for dns_record; sbfm_ for bot; rules list for ruleset; filter block for data; zone_settings with settings object; zero_trust_tunnel; zero_trust_tunnel_settings with ingress list; google for cert; fallback_pool/default_pools for lb; origins list for pool; expression for condition
 
 provider "cloudflare" {
   api_token = var.cloudflare_api_token
 }
 
 # ================================
-# ZONES – Partial setup (v5: account object, name string)
+# ZONES – Partial setup (v5: account object)
 # ================================
 resource "cloudflare_zone" "this" {
   for_each = var.zones
 
   account = {
-    id = var.cloudflare_account_id  # v5 required – object with ID
+    id = var.cloudflare_account_id
   }
-  name = each.value.domain  # v5 required – string
-  type = "partial"  # Pro/Business+; change to "full" for free test
+  name = each.value.domain
+  type = "partial"
 }
 
 # ================================
-# DNS RECORDS – Proxied only (v5: dns_record with content not value)
+# DNS RECORDS – Proxied only (v5: dns_record with content)
 # ================================
 resource "cloudflare_dns_record" "records" {
   for_each = {
@@ -27,11 +27,11 @@ resource "cloudflare_dns_record" "records" {
   }
 
   zone_id = cloudflare_zone.this[each.value.zone_key].id
-  name    = each.value.record.hostname == "" ? "@" : each.value.record.hostname
-  type    = upper(each.value.record.type)
+  name = each.value.record.hostname == "" ? "@" : each.value.record.hostname
+  type = upper(each.value.record.type)
   content = each.value.record.target  # v5: "content" not "value"
   proxied = each.value.record.proxied
-  ttl     = each.value.record.proxied ? 1 : (each.value.record.ttl != null ? each.value.record.ttl : 300)
+  ttl = each.value.record.proxied ? 1 : (each.value.record.ttl != null ? each.value.record.ttl : 300)
   comment = "Terraform-managed – partial setup"
 }
 
@@ -40,38 +40,37 @@ locals {
     for zone_key, records in var.dns_records : [
       for record in records : {
         zone_key = zone_key
-        record   = record
+        record = record
       }
     ]
   ])
 }
 
 # ================================
-# BOT MANAGEMENT – Safe challenge mode (v5: sbfm_ prefix, Enterprise-only)
+# BOT MANAGEMENT – Safe challenge mode (v5: sbfm_ prefixes, no static_resource_protection)
 # ================================
 resource "cloudflare_bot_management" "this" {
   for_each = cloudflare_zone.this
-  zone_id  = each.value.id
+  zone_id = each.value.id
 
-  enable_js               = true
-  auto_update_model       = true
-  static_resource_protection = true
-  sbfm_definitely_automated = "managed_challenge"  # v5: sbfm_ prefix for score 1
-  sbfm_likely_automated   = "managed_challenge"  # v5: sbfm_ for score 2-29
-  sbfm_verified_bots      = "allow"  # v5: sbfm_ for verified bots
+  enable_js = true
+  auto_update_model = true
+  sbfm_definitely_automated = "managed_challenge"
+  sbfm_likely_automated = "managed_challenge"
+  sbfm_verified_bots = "allow"
 }
 
 # ================================
-# MANAGED WAF + OWASP – Log-only start (v5: rules as list, execute sub-object)
+# MANAGED WAF + OWASP – Log-only start (v5: rules as list argument, execute sub-object)
 # ================================
 resource "cloudflare_ruleset" "managed_waf_log" {
   for_each = cloudflare_zone.this
-  zone_id  = each.value.id
-  name     = "Managed WAF & OWASP – LOG ONLY"
-  kind     = "zone"
-  phase    = "http_request_firewall_managed"
+  zone_id = each.value.id
+  name = "Managed WAF & OWASP – LOG ONLY"
+  kind = "zone"
+  phase = "http_request_firewall_managed"
 
-  rules = [  # v5: rules as list of objects
+  rules = [
     {
       action = "log"
       expression = "true"
@@ -95,8 +94,9 @@ resource "cloudflare_ruleset" "managed_waf_log" {
 
 data "cloudflare_rulesets" "owasp" {
   for_each = cloudflare_zone.this
-  zone_id  = each.value.id
-  filter = {  # v5: filter as object, not block
+  zone_id = each.value.id
+
+  filter {
     kind = "managed"
     name = "Cloudflare OWASP Core Ruleset"
     phase = "http_request_firewall_managed"
@@ -104,23 +104,23 @@ data "cloudflare_rulesets" "owasp" {
 }
 
 # ================================
-# WAF EXCEPTIONS – For false positives (v5: rules as list)
+# WAF EXCEPTIONS – For false positives (v5: rules list)
 # ================================
 resource "cloudflare_ruleset" "waf_exceptions" {
   for_each = cloudflare_zone.this
-  zone_id  = each.value.id
-  name     = "WAF Exceptions – false positives"
-  kind     = "zone"
-  phase    = "http_request_firewall_managed"
+  zone_id = each.value.id
+  name = "WAF Exceptions – false positives"
+  kind = "zone"
+  phase = "http_request_firewall_managed"
 
-  rules = [  # v5: list of objects
+  rules = [
     # Example: Skip a noisy rule
     # {
     #   action = "skip"
     #   expression = "true"
     #   description = "Skip rule 981173 – Wordpress false positive"
     #   enabled = true
-    #   action_parameters = {
+    #   execute = {
     #     id = "981173"
     #   }
     # }
@@ -128,71 +128,70 @@ resource "cloudflare_ruleset" "waf_exceptions" {
 }
 
 # ================================
-# RATE LIMITING – Log-only start (v5: rules as list)
+# RATE LIMITING – Log-only start (v5: rules list)
 # ================================
 resource "cloudflare_ruleset" "rate_limiting" {
   for_each = cloudflare_zone.this
-  zone_id  = each.value.id
-  name     = "Rate Limiting – LOG only"
-  kind     = "zone"
-  phase    = "http_ratelimit"
+  zone_id = each.value.id
+  name = "Rate Limiting – LOG only"
+  kind = "zone"
+  phase = "http_ratelimit"
 
-  rules = [  # v5: list of objects
+  rules = [
     {
       enabled = true
       description = "Login protection – safe start"
       expression = "(http.request.uri.path contains \"/login\")"
       action = "log"
-
       ratelimit = {
-        characteristics     = ["ip.src", "cf.client.asn"]
-        period              = 60
+        characteristics = ["ip.src", "cf.client.asn"]
+        period = 60
         requests_per_period = 15
-        mitigation_timeout  = 600
+        mitigation_timeout = 600
       }
     }
   ]
 }
 
 # ================================
-# ZONE HARDENING SETTINGS (v5: renamed to zone_settings, settings as object)
+# ZONE HARDENING SETTINGS (v5: cloudflare_zone_settings with settings object)
 # ================================
 resource "cloudflare_zone_settings" "this" {
   for_each = cloudflare_zone.this
-  zone_id  = each.value.id
+  zone_id = each.value.id
 
-  settings = {  # v5: settings as object
-    ssl                      = "strict"
-    always_use_https         = "on"
-    min_tls_version          = "1.3"
-    tls_1_3                  = "on"
+  settings = {
+    ssl = "strict"
+    always_use_https = "on"
+    min_tls_version = "1.3"
+    tls_1_3 = "on"
     automatic_https_rewrites = "on"
-    security_level           = "high"
-    brotli                   = "on"
-    websocket                = "on"
+    security_level = "high"
+    brotli = "on"
+    websocket = "on"
   }
 }
 
 # ================================
-# CLOUDFLARED TUNNEL – Zero-trust reverse proxy (v5: cloudflare_tunnel with account_id)
+# CLOUDFLARED TUNNEL – Zero-trust reverse proxy (v5: zero_trust_tunnel, zero_trust_tunnel_settings with ingress list)
 # ================================
 resource "random_id" "tunnel_secret" {
   byte_length = 32
 }
 
-resource "cloudflare_tunnel" "app_tunnel" {
-  account_id = var.cloudflare_account_id  # v5 required
-  name       = "app-to-cloudflare-tunnel"
-  secret     = random_id.tunnel_secret.b64_std
+resource "cloudflare_zero_trust_tunnel" "app_tunnel" {
+  account_id = var.cloudflare_account_id
+  name = "app-to-cloudflare-tunnel"
+  secret = random_id.tunnel_secret.b64_std
 }
 
-resource "cloudflare_tunnel_configuration" "app_tunnel_config" {
-  tunnel_id = cloudflare_tunnel.app_tunnel.id
+resource "cloudflare_zero_trust_tunnel_settings" "app_tunnel_config" {
+  tunnel_id = cloudflare_zero_trust_tunnel.app_tunnel.id
 
-  ingress = [  # v5: ingress as list of objects
+  ingress = [
     {
       hostname = var.tunnel_public_hostname
-      service  = "http://localhost:${var.app_port}"
+      service = "http://localhost:${var.app_port}"
     },
     {
       service = "http_status:404"
@@ -200,14 +199,14 @@ resource "cloudflare_tunnel_configuration" "app_tunnel_config" {
   ]
 }
 
-# Tunnel CNAME – Proxied for WAF/Bot (v5: dns_record with content, ttl required)
+# Tunnel CNAME – Proxied for WAF/Bot (v5: dns_record with content, ttl)
 resource "cloudflare_dns_record" "tunnel_cname" {
   zone_id = cloudflare_zone.this[var.primary_zone_key].id
-  name    = split(".", var.tunnel_public_hostname)[0]
-  type    = "CNAME"
-  content = "${cloudflare_tunnel.app_tunnel.id}.cfargotunnel.com"  # v5: "content" not "value"
+  name = split(".", var.tunnel_public_hostname)[0]
+  type = "CNAME"
+  content = "${cloudflare_zero_trust_tunnel.app_tunnel.id}.cfargotunnel.com"
   proxied = true
-  ttl     = 1  # v5 required for CNAME
+  ttl = 1
   comment = "Tunnel CNAME – Terraform-managed"
 }
 
@@ -217,76 +216,68 @@ resource "cloudflare_dns_record" "tunnel_cname" {
 resource "cloudflare_certificate_pack" "advanced_cert" {
   for_each = var.enable_advanced_cert ? cloudflare_zone.this : {}
 
-  zone_id             = each.value.id
-  type                = "advanced"
-  hosts               = [each.value.zone, "*.${each.value.zone}"]
-  validation_method   = "txt"
-  validity_days       = 30
-  certificate_authority = "google"  # v5 valid: google, lets_encrypt, ssl_com
+  zone_id = each.value.id
+  type = "advanced"
+  hosts = [each.value.zone, "*.${each.value.zone}"]
+  validation_method = "txt"
+  validity_days = 30
+  certificate_authority = "google"
   cloudflare_branding = false
 }
 
 # ================================
-# GLOBAL LOAD BALANCING – Between app servers via tunnel (v5: fallback_pool/default_pools, rules list)
+# GLOBAL LOAD BALANCING – Between app servers via tunnel (v5: fallback_pool/default_pools, rules list with expression)
 # ================================
 resource "cloudflare_load_balancer" "app_lb" {
-  zone_id       = cloudflare_zone.this[var.primary_zone_key].id
-  name          = var.tunnel_public_hostname
-  fallback_pool = cloudflare_load_balancer_pool.app_pool  # v5: pool object, not id
-  default_pools = [cloudflare_load_balancer_pool.app_pool]  # v5: list of pools
-  proxied       = true
+  zone_id = cloudflare_zone.this[var.primary_zone_key].id
+  name = var.tunnel_public_hostname
+  fallback_pool = cloudflare_load_balancer_pool.app_pool
+  default_pools = [cloudflare_load_balancer_pool.app_pool]
+  proxied = true
 
   steering_policy = "geo"
   session_affinity = "ip_cookie"
   session_affinity_ttl = 14400
 
-  rules = [  # v5: rules as list of objects
+  rules = [
     {
       name = "itar_block"
       fixed_response = {
-        status_code  = 403
+        status_code = 403
         message_body = "Access Denied – Restricted Country"
       }
-      condition = {
-        matches = [
-          {
-            name  = "ip.geoip.country"
-            op    = "in"
-            value = var.itar_restricted_countries
-          }
-        ]
-      }
+      expression = "ip.geoip.country in ${jsonencode(var.itar_restricted_countries)}"  # v5: expression string for condition
       priority = 1
     }
   ]
 }
 
 resource "cloudflare_load_balancer_pool" "app_pool" {
-  account_id = var.cloudflare_account_id  # v5 required
-  name       = "app-pool"
-  origins = [  # v5: list of objects
+  account_id = var.cloudflare_account_id
+  name = "app-pool"
+  origins = [
     {
-      name    = "app-server-1"
+      name = "app-server-1"
       address = var.proxy_vm_app_server_ips[0]
       enabled = true
-      weight  = 1
+      weight = 1
     },
     {
-      name    = "app-server-2"
+      name = "app-server-2"
       address = var.proxy_vm_app_server_ips[1]
       enabled = true
-      weight  = 1
+      weight = 1
     }
   ]
-  monitor = cloudflare_load_balancer_monitor.app_monitor  # v5: pool object
+  monitor = cloudflare_load_balancer_monitor.app_monitor
 }
 
 resource "cloudflare_load_balancer_monitor" "app_monitor" {
-  account_id = var.cloudflare_account_id  # v5 required
+  account_id = var.cloudflare_account_id
   expected_codes = "2xx, 3xx"
-  method         = "GET"
-  path           = "/health"
-  interval       = 60
-  timeout        = 5
-  retries        = 2
+  method = "GET"
+  path = "/health"
+  interval = 60
+  timeout = 5
+  retries = 2
 }
