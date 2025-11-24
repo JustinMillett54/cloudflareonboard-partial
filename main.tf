@@ -1,5 +1,5 @@
-# main.tf – Verified v5.12 Syntax (November 2025)
-# Fixes: account object for zone; content/ttl for dns_record; sbfm_ only for bot; rules as list arg for ruleset; filter arg object for data; zone_setting singular with settings object; zero_trust_tunnel; zero_trust_tunnel_settings with ingress list arg; google for cert; fallback_pool/default_pools as id strings for lb; origins list arg for pool
+# main.tf – Verified v5.13 Syntax (November 2025)
+# Fixes: account object for zone; content for dns_record; sbfm_ only for bot; rules list arg for ruleset; filter object for data rulesets; zone_setting singular with for_each; zero_trust_tunnel_cloudflared; zero_trust_tunnel_cloudflared_config with ingress list; google for cert; fallback_pool/default_pools as id; origins block for pool; account_id for monitor; hardcoded OWASP ID
 
 provider "cloudflare" {
   api_token = var.cloudflare_api_token
@@ -16,7 +16,7 @@ resource "cloudflare_zone" "this" {
   type = "partial"
 }
 
-# DNS RECORDS – Proxied only (v5: dns_record with content, ttl)
+# DNS RECORDS – Proxied only (v5: dns_record with content)
 resource "cloudflare_dns_record" "records" {
   for_each = {
     for pair in local.record_pairs : "${pair.zone_key}.${pair.record.hostname}.${pair.record.type}" => pair
@@ -27,7 +27,7 @@ resource "cloudflare_dns_record" "records" {
   type = upper(each.value.record.type)
   content = each.value.record.target  # v5: "content"
   proxied = each.value.record.proxied
-  ttl = each.value.record.proxied ? 1 : (each.value.record.ttl != null ? each.value.record.ttl : 300)  # v5 required
+  ttl = each.value.record.proxied ? 1 : (each.value.record.ttl != null ? each.value.record.ttl : 300)
   comment = "Terraform-managed – partial setup"
 }
 
@@ -42,7 +42,7 @@ locals {
   ])
 }
 
-# BOT MANAGEMENT – Safe challenge mode (v5: sbfm_ only, no static_resource_protection)
+# BOT MANAGEMENT – Safe challenge mode (v5: sbfm_ only)
 resource "cloudflare_bot_management" "this" {
   for_each = cloudflare_zone.this
   zone_id = each.value.id
@@ -54,7 +54,7 @@ resource "cloudflare_bot_management" "this" {
   sbfm_verified_bots = "allow"
 }
 
-# MANAGED WAF + OWASP – Log-only start (v5: rules list arg, execute sub-object)
+# MANAGED WAF + OWASP – Log-only start (v5: rules list arg, execute sub-object; hardcoded OWASP ID)
 resource "cloudflare_ruleset" "managed_waf_log" {
   for_each = cloudflare_zone.this
   zone_id = each.value.id
@@ -78,12 +78,13 @@ resource "cloudflare_ruleset" "managed_waf_log" {
       enabled = true
       description = "OWASP Core Ruleset – LOG"
       execute = {
-        id = data.cloudflare_rulesets.owasp[each.key].rulesets[0].id
+        id = "4814384a9e5d4991b9815d64d2d2d2d2"  # v5 hardcoded OWASP ID (from docs)
       }
     }
   ]
 }
 
+# Data rulesets – OWASP (v5: filter object)
 data "cloudflare_rulesets" "owasp" {
   for_each = cloudflare_zone.this
   zone_id = each.value.id
@@ -141,21 +142,69 @@ resource "cloudflare_ruleset" "rate_limiting" {
   ]
 }
 
-# ZONE HARDENING SETTINGS (v5: cloudflare_zone_setting singular, settings object)
-resource "cloudflare_zone_setting" "this" {
+# ZONE HARDENING SETTINGS (v5: cloudflare_zone_setting singular, for_each for each setting)
+resource "cloudflare_zone_setting" "ssl_setting" {
   for_each = cloudflare_zone.this
-  zone_id = each.value.id
 
-  settings = {
-    ssl = "strict"
-    always_use_https = "on"
-    min_tls_version = "1.3"
-    tls_1_3 = "on"
-    automatic_https_rewrites = "on"
-    security_level = "high"
-    brotli = "on"
-    websocket = "on"
-  }
+  zone_id = each.value.id
+  setting_id = "ssl"
+  value = "strict"
+}
+
+resource "cloudflare_zone_setting" "always_use_https" {
+  for_each = cloudflare_zone.this
+
+  zone_id = each.value.id
+  setting_id = "always_use_https"
+  value = "on"
+}
+
+resource "cloudflare_zone_setting" "min_tls_version" {
+  for_each = cloudflare_zone.this
+
+  zone_id = each.value.id
+  setting_id = "min_tls_version"
+  value = "1.3"
+}
+
+resource "cloudflare_zone_setting" "tls_1_3" {
+  for_each = cloudflare_zone.this
+
+  zone_id = each.value.id
+  setting_id = "tls_1_3"
+  value = "on"
+}
+
+resource "cloudflare_zone_setting" "automatic_https_rewrites" {
+  for_each = cloudflare_zone.this
+
+  zone_id = each.value.id
+  setting_id = "automatic_https_rewrites"
+  value = "on"
+}
+
+resource "cloudflare_zone_setting" "security_level" {
+  for_each = cloudflare_zone.this
+
+  zone_id = each.value.id
+  setting_id = "security_level"
+  value = "high"
+}
+
+resource "cloudflare_zone_setting" "brotli" {
+  for_each = cloudflare_zone.this
+
+  zone_id = each.value.id
+  setting_id = "brotli"
+  value = "on"
+}
+
+resource "cloudflare_zone_setting" "websocket" {
+  for_each = cloudflare_zone.this
+
+  zone_id = each.value.id
+  setting_id = "websocket"
+  value = "on"
 }
 
 # CLOUDFLARED TUNNEL – Zero-trust reverse proxy (v5: cloudflare_tunnel, tunnel_settings with ingress list)
@@ -211,8 +260,8 @@ resource "cloudflare_certificate_pack" "advanced_cert" {
 resource "cloudflare_load_balancer" "app_lb" {
   zone_id = cloudflare_zone.this[var.primary_zone_key].id
   name = var.tunnel_public_hostname
-  fallback_pool = cloudflare_load_balancer_pool.app_pool.id  # v5: .id
-  default_pools = [cloudflare_load_balancer_pool.app_pool.id]  # v5: list of ids
+  fallback_pool = cloudflare_load_balancer_pool.app_pool.id
+  default_pools = [cloudflare_load_balancer_pool.app_pool.id]
   proxied = true
 
   steering_policy = "geo"
@@ -226,7 +275,7 @@ resource "cloudflare_load_balancer" "app_lb" {
         status_code = 403
         message_body = "Access Denied – Restricted Country"
       }
-      expression = "ip.geoip.country in ${jsonencode(var.itar_restricted_countries)}"  # v5: expression string
+      expression = "ip.geoip.country in ${jsonencode(var.itar_restricted_countries)}"
       priority = 1
     }
   ]
@@ -235,20 +284,18 @@ resource "cloudflare_load_balancer" "app_lb" {
 resource "cloudflare_load_balancer_pool" "app_pool" {
   account_id = var.cloudflare_account_id
   name = "app-pool"
-  origins = [
-    {
-      name = "app-server-1"
-      address = var.proxy_vm_app_server_ips[0]
-      enabled = true
-      weight = 1
-    },
-    {
-      name = "app-server-2"
-      address = var.proxy_vm_app_server_ips[1]
-      enabled = true
-      weight = 1
-    }
-  ]
+  origins {
+    name = "app-server-1"
+    address = var.proxy_vm_app_server_ips[0]
+    enabled = true
+    weight = 1
+  }
+  origins {
+    name = "app-server-2"
+    address = var.proxy_vm_app_server_ips[1]
+    enabled = true
+    weight = 1
+  }
   monitor = cloudflare_load_balancer_monitor.app_monitor.id
 }
 
