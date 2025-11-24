@@ -12,7 +12,7 @@ resource "cloudflare_zone" "this" {
     id = var.cloudflare_account_id
   }
   name = each.value.domain
-  type = "partial"  # Change to "full" for free test
+  type = "partial"
 }
 
 # ================================
@@ -37,7 +37,7 @@ locals {
     for zone_key, records in var.dns_records : [
       for record in records : {
         zone_key = zone_key
-        record = record
+        record   = record
       }
     ]
   ])
@@ -50,11 +50,11 @@ resource "cloudflare_bot_management" "this" {
   for_each = cloudflare_zone.this
   zone_id  = each.value.id
 
-  enable_js               = true
-  auto_update_model       = true
+  enable_js = true
+  auto_update_model = true
   sbfm_definitely_automated = "managed_challenge"
-  sbfm_likely_automated     = "managed_challenge"
-  sbfm_verified_bots        = "allow"
+  sbfm_likely_automated = "managed_challenge"
+  sbfm_verified_bots = "allow"
 }
 
 # ================================
@@ -69,18 +69,18 @@ resource "cloudflare_ruleset" "managed_waf_log" {
 
   rules = [
     {
-      action      = "log"
-      expression  = "true"
-      enabled     = true
+      action = "log"
+      expression = "true"
+      enabled = true
       description = "Cloudflare Managed Ruleset – LOG"
       execute = {
         id = "efb7b8c949ac4650a0e52a9c2d13d3bb"
       }
     },
     {
-      action      = "log"
-      expression  = "true"
-      enabled     = true
+      action = "log"
+      expression = "true"
+      enabled = true
       description = "OWASP Core Ruleset – LOG"
       execute = {
         id = "4814384a9e5d4991b9815d64d2d2d2d2"
@@ -89,9 +89,10 @@ resource "cloudflare_ruleset" "managed_waf_log" {
   ]
 }
 
+# OWASP Data Source – v5.13 argument syntax
 data "cloudflare_rulesets" "owasp" {
   for_each = cloudflare_zone.this
-  zone_id  = each.value.id
+  zone_id = each.value.id
 
   filter = {
     kind = "managed"
@@ -100,9 +101,7 @@ data "cloudflare_rulesets" "owasp" {
   }
 }
 
-# ================================
 # WAF EXCEPTIONS – For false positives
-# ================================
 resource "cloudflare_ruleset" "waf_exceptions" {
   for_each = cloudflare_zone.this
   zone_id  = each.value.id
@@ -113,10 +112,10 @@ resource "cloudflare_ruleset" "waf_exceptions" {
   rules = [
     # Example: Skip a noisy rule
     # {
-    #   action      = "skip"
-    #   expression  = "true"
+    #   action = "skip"
+    #   expression = "true"
     #   description = "Skip rule 981173 – Wordpress false positive"
-    #   enabled     = true
+    #   enabled = true
     #   action_parameters = {
     #     id = "981173"
     #   }
@@ -124,27 +123,25 @@ resource "cloudflare_ruleset" "waf_exceptions" {
   ]
 }
 
-# ================================
 # RATE LIMITING – Log-only start
-# ================================
 resource "cloudflare_ruleset" "rate_limiting" {
   for_each = cloudflare_zone.this
-  zone_id  = each.value.id
-  name     = "Rate Limiting – LOG only"
-  kind     = "zone"
-  phase    = "http_ratelimit"
+  zone_id = each.value.id
+  name = "Rate Limiting – LOG only"
+  kind = "zone"
+  phase = "http_ratelimit"
 
   rules = [
     {
-      enabled     = true
+      enabled = true
       description = "Login protection – safe start"
-      expression  = "(http.request.uri.path contains \"/login\")"
-      action      = "log"
+      expression = "(http.request.uri.path contains \"/login\")"
+      action = "log"
       ratelimit = {
-        characteristics     = ["ip.src", "cf.client.asn"]
-        period              = 60
+        characteristics = ["ip.src", "cf.client.asn"]
+        period = 60
         requests_per_period = 15
-        mitigation_timeout  = 600
+        mitigation_timeout = 600
       }
     }
   ]
@@ -222,42 +219,44 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "app_tunnel_config" {
   tunnel_id  = cloudflare_zero_trust_tunnel_cloudflared.app_tunnel.id
   account_id = var.cloudflare_account_id
 
-  config {
-    ingress_rule {
-      hostname = var.tunnel_public_hostname
-      service  = "http://localhost:${var.app_port}"
-    }
-    ingress_rule {
-      service = "http_status:404"
-    }
+  config = {
+    ingress_rule = [
+      {
+        hostname = var.tunnel_public_hostname
+        service  = "http://localhost:${var.app_port}"
+      },
+      {
+        service = "http_status:404"
+      }
+    ]
   }
 }
 
-# Tunnel CNAME
+# Tunnel CNAME – Proxied for WAF/Bot (v5: dns_record with content, ttl)
 resource "cloudflare_dns_record" "tunnel_cname" {
   zone_id = cloudflare_zone.this[var.primary_zone_key].id
-  name    = split(".", var.tunnel_public_hostname)[0]
-  type    = "CNAME"
+  name = split(".", var.tunnel_public_hostname)[0]
+  type = "CNAME"
   content = "${cloudflare_zero_trust_tunnel_cloudflared.app_tunnel.id}.cfargotunnel.com"
   proxied = true
-  ttl     = 1
-  comment = "Tunnel CNAME"
+  ttl = 1
+  comment = "Tunnel CNAME – Terraform-managed"
 }
 
-# ADVANCED CERT PACK
+# ADVANCED CERT PACK – Dedicated certs (v5: certificate_authority = "google")
 resource "cloudflare_certificate_pack" "advanced_cert" {
   for_each = var.enable_advanced_cert ? cloudflare_zone.this : {}
 
-  zone_id               = each.value.id
-  type                  = "advanced"
-  hosts                 = [each.value.zone, "*.${each.value.zone}"]
-  validation_method     = "txt"
-  validity_days         = 30
+  zone_id = each.value.id
+  type = "advanced"
+  hosts = [each.value.zone, "*.${each.value.zone}"]
+  validation_method = "txt"
+  validity_days = 30
   certificate_authority = "google"
-  cloudflare_branding   = false
+  cloudflare_branding = false
 }
 
-# GLOBAL LOAD BALANCER
+# GLOBAL LOAD BALANCING – Between app servers via tunnel (v5: fallback_pool/default_pools as id, rules list with expression)
 resource "cloudflare_load_balancer" "app_lb" {
   zone_id = cloudflare_zone.this[var.primary_zone_key].id
   name = var.tunnel_public_hostname
@@ -285,7 +284,6 @@ resource "cloudflare_load_balancer" "app_lb" {
 resource "cloudflare_load_balancer_pool" "app_pool" {
   account_id = var.cloudflare_account_id
   name = "app-pool"
-
   origins = [
     {
       name = "app-server-1"
@@ -300,13 +298,12 @@ resource "cloudflare_load_balancer_pool" "app_pool" {
       weight = 1
     }
   ]
-
   monitor = cloudflare_load_balancer_monitor.app_monitor.id
 }
 
 resource "cloudflare_load_balancer_monitor" "app_monitor" {
   account_id = var.cloudflare_account_id
-  expected_codes = "2xx,3xx"
+  expected_codes = "2xx, 3xx"
   method = "GET"
   path = "/health"
   interval = 60
