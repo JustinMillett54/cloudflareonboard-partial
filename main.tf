@@ -1,19 +1,19 @@
-# main.tf – Fixed for Cloudflare v5.12 (November 2025)
-# Changes: account (not account_id) for zone; origins as arg (not block) for pool; tunnel_configuration (v5 rename); added account_id to monitor
+# main.tf – Corrected for Cloudflare v5.12 (November 2025)
+# Changes: account_id for zone/monitor; origins as list arg for pool; tunnel_configuration with ingress list; no "account" object
 
 provider "cloudflare" {
   api_token = var.cloudflare_api_token
 }
 
 # ================================
-# ZONES – Partial setup (v5: 'account' required, 'name' not 'zone')
+# ZONES – Partial setup (v5: account_id string, name string)
 # ================================
 resource "cloudflare_zone" "this" {
   for_each = var.zones
 
-  account = var.cloudflare_account_id  # v5 required – string account ID
-  name    = each.value.domain  # v5 uses 'name' instead of 'zone'
-  type    = "partial"  # Pro/Business+ required; change to "full" for free test
+  account_id = var.cloudflare_account_id  # v5 required – string ID
+  name       = each.value.domain  # v5 required – string domain name
+  type       = "partial"  # Pro/Business+ required; change to "full" for free test
 }
 
 # ================================
@@ -167,28 +167,27 @@ resource "cloudflare_zone_settings_override" "this" {
 }
 
 # ================================
-# CLOUDFLARED TUNNEL – Zero-trust reverse proxy (v5: cloudflare_tunnel, config is tunnel_configuration)
+# CLOUDFLARED TUNNEL – Zero-trust reverse proxy (v5: tunnel unchanged, config is tunnel_configuration with ingress list)
 # ================================
 resource "random_id" "tunnel_secret" {
   byte_length = 32
 }
 
 resource "cloudflare_tunnel" "app_tunnel" {
-  account_id = var.cloudflare_account_id
+  account_id = var.cloudflare_account_id  # v5 required
   name       = "app-to-cloudflare-tunnel"
   secret     = random_id.tunnel_secret.b64_std
 }
 
 resource "cloudflare_tunnel_configuration" "app_tunnel_config" {
-  account_id = var.cloudflare_account_id  # v5 required
-  tunnel_id  = cloudflare_tunnel.app_tunnel.id
+  tunnel_id = cloudflare_tunnel.app_tunnel.id  # v5 required
 
-  ingress_rule {
+  ingress {
     hostname = var.tunnel_public_hostname
     service  = "http://localhost:${var.app_port}"
   }
 
-  ingress_rule {
+  ingress {
     service = "http_status:404"
   }
 }
@@ -219,7 +218,7 @@ resource "cloudflare_certificate_pack" "advanced_cert" {
 }
 
 # ================================
-# GLOBAL LOAD BALANCING – Between app servers via tunnel (v5: origins as arg list)
+# GLOBAL LOAD BALANCING – Between app servers via tunnel (v5: account_id for pool/monitor; origins as list arg)
 # ================================
 resource "cloudflare_load_balancer" "app_lb" {
   zone_id          = cloudflare_zone.this[var.primary_zone_key].id
@@ -250,8 +249,9 @@ resource "cloudflare_load_balancer" "app_lb" {
 }
 
 resource "cloudflare_load_balancer_pool" "app_pool" {
-  name = "app-pool"
-  origins = [  # v5: origins as argument list, not block
+  account_id = var.cloudflare_account_id  # v5 required
+  name       = "app-pool"
+  origins = [  # v5: origins as list argument, not block
     {
       name    = "app-server-1"
       address = var.proxy_vm_app_server_ips[0]
@@ -265,7 +265,7 @@ resource "cloudflare_load_balancer_pool" "app_pool" {
       weight  = 1
     }
   ]
-  monitor = cloudflare_load_balancer_monitor.app_monitor.id
+  monitor = cloudflare_load_balancer_monitor.app_monitor.id  # v5 required
 }
 
 resource "cloudflare_load_balancer_monitor" "app_monitor" {
